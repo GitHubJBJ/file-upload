@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <script src="md5.js"></script>
+
+    <!--
+        Blob 
+        https://developer.mozilla.org/zh-CN/docs/Web/API/Blob
+
+    -->
+
+</head>
+
+<body>
+    <input type="file">
+    <script>
+
+        /**
+        * @param {File|Blob} - 需要切片的文件或Blob
+        * @param {Number} - 每次最大量
+        * @return {Array} - an array of Blobs
+        **/
+        function sliceFile(blob, chunksAmount) {
+            let byteIndex = 0;
+            let chunks = [];
+            var amount = Math.ceil(blob.size / chunksAmount);
+
+            for (let i = 1; i <= amount; i += 1) {
+                let byteEnd = 0;
+                byteIndex = (i - 1) * chunksAmount;
+
+                if (i != amount) {
+                    byteEnd = byteIndex + chunksAmount;
+                }
+                else
+                    byteEnd = blob.size;
+
+                chunks.push({ blob: blob.slice(byteIndex, byteEnd), range: `bytes ${byteIndex}-${byteEnd - 1}/${blob.size}` });
+                byteIndex += (byteEnd - byteIndex);
+            }
+
+            return chunks;
+        }
+
+
+        function uploadWhole(url, blob,filename) {
+
+            const formData = new FormData();
+            var file = new File([blob], filename);
+            formData.append("files", file);
+            fetch(endpoint, {
+                method: "post",
+                body: formData
+            }).then((response) => {
+
+                return response.json();
+            }).then((json) => {
+                
+                console.log("小文件上传成功",json);
+            });
+        }
+
+        function uploadPart(url, chunks,chunkSize,fileid,filename) {
+            let part = chunks.shift();
+            if (part) {
+                const formData = new FormData();
+                let blob = part.blob;
+                
+                var filePart = new File([blob], filename);
+                
+                let range = part.range;
+
+                formData.append("files", filePart);
+                fetch(url, {
+                    headers: {
+                        'X-File-Identifier': fileid,
+                        "Content-Range": range
+                    },
+                    method: "post",
+                    body: formData
+                }).then((response) => {
+                    return response.json();
+                }).then((json) => {
+                    //console.log(json);
+
+                    let ratio = (chunkSize - chunks.length) / chunkSize * 100;
+                    console.log("已完成",ratio);
+
+                    if (chunks.length > 0) {
+                        setTimeout(uploadPart(url, chunks,chunkSize,fileid, filename), 500);
+                    } else {
+                        return json;
+                    }
+                }).then((result) => {
+                    if (result) {
+                        //文件上传成功
+                        console.log(result);
+                    }
+
+                });
+            }
+        }
+
+        function uploadBig(url, blob, maxsize,filename) {
+
+            let chunks = sliceFile(blob, maxChunkSize);
+            
+            console.log(chunks);
+            
+            blob.arrayBuffer().then(buffer => {
+                var wordArray = CryptoJS.lib.WordArray.create(buffer);
+                var md5 = CryptoJS.MD5(wordArray).toString()
+                return md5;
+            }).then(fileid => {
+
+                //计算出文件唯一ID，再启动切片上传
+                console.log("fileid", fileid);
+                let chunkSize = chunks.length;
+                
+                uploadPart(url, chunks, chunkSize,fileid, filename);
+            });
+
+
+        }
+
+
+        const maxChunkSize = 10000000;
+        const endpoint = "http://127.0.0.1:8080/FileUpload/Upload";
+        const input = document.querySelector('input[type="file"]');
+
+        input.addEventListener('change', function (e) {
+            
+            let file = input.files[0];
+            let filename = file.name;
+            
+            let reader = new FileReader();
+            reader.onload = function(e) {
+                let blob = new Blob([new Uint8Array(e.target.result)], {type: file.type });
+                console.log(blob);
+
+                if (blob.size <= maxChunkSize)
+                    uploadWhole(endpoint, blob,filename);
+                else
+                    uploadBig(endpoint, blob, maxChunkSize,filename);
+            };
+            reader.readAsArrayBuffer(file);
+            
+        }, false);
+
+
+
+    </script>
+</body>
+
+</html>
